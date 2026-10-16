@@ -1,43 +1,211 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>周丽没木</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
-        }
-        .container {
-            text-align: center;
-        }
-        .main-text {
-            font-size: 80px;
-            font-weight: bold;
-            color: white;
-            text-shadow: 2px 2px 10px rgba(0,0,0,0.3);
-            letter-spacing: 20px;
-            animation: fadeIn 1.5s ease-in;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-30px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>周丽没木</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: #000 url("bg.jpg") center / contain no-repeat;
+        font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    }
+
+    h1 {
+        font-size: clamp(2.75rem, 13vw, 5.5rem);
+        font-weight: bold;
+        color: #fff;
+        letter-spacing: clamp(6px, 2.2vw, 20px);
+        padding-left: clamp(6px, 2.2vw, 20px); /* 抵消末字字距，保证视觉居中 */
+        text-shadow: 0 2px 8px rgba(0, 0, 0, .9), 0 0 28px rgba(0, 0, 0, .65);
+        caret-color: #fff;
+        outline: none;
+        cursor: grab;          /* 提示这东西可以拖 */
+        touch-action: none;    /* 手机上拖动时不滚动页面 */
+    }
+    h1.dragging { cursor: grabbing; }
+
+    /* 空文字时显示的提示 */
+    h1:empty { padding-left: 0; }
+    h1:empty::before {
+        content: '点这里输入文字\A按住可以拖到任意位置';
+        white-space: pre;
+        line-height: 2;
+        font-size: clamp(.95rem, 3.6vw, 1.4rem);
+        font-weight: normal;
+        letter-spacing: .2em;
+        opacity: .65;
+    }
+
+    h1:hover, h1:focus { outline: 1px dashed rgba(255, 255, 255, .45); outline-offset: 14px; }
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="main-text">周丽没木</div>
-    </div>
+    <!-- 这行字是留给访客自己写的：点一下输入文字，按住可以拖到任意位置。
+         文字和位置都记在访客自己的浏览器里，每个访客一份，页面上不预设任何文字。 -->
+    <h1 contenteditable="true" spellcheck="false" draggable="false"
+        title="点一下输入文字，按住可以拖到任意位置"></h1>
+
+    <script>
+        (function () {
+            var el = document.querySelector('h1');
+            var TEXT_KEY = 'zhouli-text';
+            var POS_KEY = 'zhouli-pos';
+            var x = 0, y = 0;
+
+            function apply() {
+                el.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+            }
+
+            function sync() {
+                var text = el.textContent;
+                if (text.trim()) {
+                    document.title = text;
+                } else {
+                    el.innerHTML = '';        // 清掉编辑残留的换行，让提示重新出现
+                    document.title = '周丽没木';
+                }
+            }
+
+            function saveText() {
+                try { localStorage.setItem(TEXT_KEY, el.textContent); } catch (e) {}
+            }
+            function savePos() {
+                try { localStorage.setItem(POS_KEY, JSON.stringify([Math.round(x), Math.round(y)])); } catch (e) {}
+            }
+
+            // 读回这位访客上次写的文字和摆的位置
+            try {
+                var savedText = localStorage.getItem(TEXT_KEY);
+                if (savedText) el.textContent = savedText;
+                var savedPos = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
+                if (savedPos && typeof savedPos[0] === 'number' && typeof savedPos[1] === 'number') {
+                    x = savedPos[0];
+                    y = savedPos[1];
+                    apply();
+                }
+            } catch (e) {}
+
+            sync();
+
+            el.addEventListener('input', function () {
+                sync();
+                saveText();
+                clampPos(x, y);      // 文字变长/换行后会变宽，重新保证它还留在画面里
+                apply();
+                savePos();
+            });
+
+            // 粘贴只取纯文本，免得带进来一堆样式
+            el.addEventListener('paste', function (e) {
+                e.preventDefault();
+                var text = (e.clipboardData || window.clipboardData).getData('text');
+                document.execCommand('insertText', false, text);
+            });
+
+            el.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+            });
+
+            /* ---------------- 拖动位置 ---------------- */
+
+            var MARGIN = 8;    // 至少留这么多像素在屏幕内，拖不出视野
+
+            function clampPos(cx, cy) {
+                // offsetLeft/offsetTop 不受 transform 影响，直接就是要还原的基准位置
+                var bw = el.offsetWidth;
+                var bh = el.offsetHeight;
+                var baseLeft = el.offsetLeft;
+                var baseTop = el.offsetTop;
+                var minX = MARGIN - baseLeft;
+                var maxX = window.innerWidth - MARGIN - baseLeft - bw;
+                var minY = MARGIN - baseTop;
+                var maxY = window.innerHeight - MARGIN - baseTop - bh;
+                x = (minX > maxX) ? (minX + maxX) / 2 : Math.min(Math.max(cx, minX), maxX);
+                y = (minY > maxY) ? (minY + maxY) / 2 : Math.min(Math.max(cy, minY), maxY);
+            }
+
+            function caretAt(px, py) {
+                el.focus();
+                var range = null;
+                if (document.caretRangeFromPoint) {
+                    range = document.caretRangeFromPoint(px, py);
+                } else if (document.caretPositionFromPoint) {
+                    var pos = document.caretPositionFromPoint(px, py);
+                    if (pos) {
+                        range = document.createRange();
+                        range.setStart(pos.offsetNode, pos.offset);
+                        range.collapse(true);
+                    }
+                }
+                if (range && el.contains(range.startContainer) && window.getSelection) {
+                    var sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            }
+
+            var dragId = null, startX = 0, startY = 0, originX = 0, originY = 0, moved = false;
+
+            el.addEventListener('pointerdown', function (e) {
+                if (e.button) return;                    // 只认左键和触摸
+                dragId = e.pointerId;
+                startX = e.clientX;
+                startY = e.clientY;
+                originX = x;
+                originY = y;
+                moved = false;
+                try { el.setPointerCapture(dragId); } catch (err) {}
+                e.preventDefault();                      // 先不落光标，松手时再判断是输入还是拖动
+            });
+
+            el.addEventListener('pointermove', function (e) {
+                if (dragId === null || e.pointerId !== dragId) return;
+                var mx = e.clientX - startX;
+                var my = e.clientY - startY;
+                if (!moved) {
+                    if (Math.abs(mx) + Math.abs(my) < 5) return;   // 手指/鼠标抖一下不算拖动
+                    moved = true;
+                    el.classList.add('dragging');
+                }
+                x = originX + mx;
+                y = originY + my;
+                clampPos(x, y);
+                apply();
+            });
+
+            function endDrag(e) {
+                if (dragId === null) return;
+                try { el.releasePointerCapture(dragId); } catch (err) {}
+                dragId = null;
+                el.classList.remove('dragging');
+                if (moved) {
+                    savePos();
+                } else {
+                    caretAt(e.clientX, e.clientY);       // 没移动 = 访客想输入文字
+                }
+            }
+            el.addEventListener('pointerup', endDrag);
+            el.addEventListener('pointercancel', function () {
+                if (dragId === null) return;
+                dragId = null;
+                el.classList.remove('dragging');
+                if (moved) savePos();
+            });
+
+            // 换窗口大小时重新校一下，保证文字还在画面里
+            window.addEventListener('resize', function () {
+                clampPos(x, y);
+                apply();
+                savePos();
+            });
+        })();
+    </script>
 </body>
 </html>
